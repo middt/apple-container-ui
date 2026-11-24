@@ -1,0 +1,48 @@
+# MockLab for the vnext-example domain, adapted for Apple Container (run it with Vessel).
+#
+# Based on vnext-example/docker-compose.yml. As in the vnext-core stack, the Dapr sidecar is a
+# container of its own (`--app-channel-address mocklab`) instead of sharing MockLab's network
+# namespace. It joins `vnext-development`, so the runtime reaches it as `mocklab`.
+#
+# .env: VNEXT_EXAMPLE_DIR = <vnext-example checkout>
+
+services:
+  mocklab:
+    image: ghcr.io/burgan-tech/mocklab:${MOCKLAB_VERSION:-latest}
+    container_name: mocklab
+    cpus: 2
+    mem_limit: 1g
+    ports:
+      - "3001:5000/http"
+    environment:
+      Mocklab__SeedDirectory: /app/seed
+    volumes:
+      - ${VNEXT_EXAMPLE_DIR}/etc/docker/config/seed:/app/seed
+
+  mocklab-dapr:
+    image: daprio/daprd:latest
+    container_name: mocklab-dapr
+    cpus: 1
+    mem_limit: 512m
+    command: [
+      "./daprd",
+      "--app-id", "mocklab",
+      "--app-port", "5000",
+      "--app-channel-address", "mocklab",
+      "--dapr-listen-addresses", "0.0.0.0",
+      "--dapr-http-port", "3500",
+      "--dapr-grpc-port", "50001",
+      "--dapr-internal-grpc-port", "50002",
+      "--config", "/dapr-config/config.yaml",
+      "--resources-path", "/etc/dapr/components",
+      "--log-level", "info"
+    ]
+    volumes:
+      - ${VNEXT_EXAMPLE_DIR}/etc/dapr:/etc/dapr
+      - ../dapr:/dapr-config:ro
+    depends_on:
+      - mocklab
+
+networks:
+  vnext-development:
+    external: true

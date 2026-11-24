@@ -1,0 +1,18 @@
+# Dapr configuration shared by every sidecar of the vNext stacks on Apple Container.
+#
+# Dapr's default name resolver (mDNS) cannot work here: the container VMs have no
+# multicast-capable interface ("zeroconf register: No supported interface"). The `nameformat`
+# resolver maps an app id to a DNS name instead. Every sidecar container is therefore named
+# `<app-id>-dapr` and listens for sidecar-to-sidecar calls on the fixed port 50002
+# (`--dapr-internal-grpc-port 50002`).
+apiVersion: dapr.io/v1alpha1
+kind: Configuration
+metadata:
+  name: vessel-apple-container
+spec:
+  mtls:
+    enabled: false
+  nameResolution:
+    component: "nameformat"
+    configuration:
+      format: "{appid}-dapr:50002"

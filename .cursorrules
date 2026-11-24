@@ -1,0 +1,10 @@
+# Cursor Rules for Vessel (apple-container-ui)
+
+- Read `AGENTS.md` and `docs/ARCHITECTURE.md` before modifying code.
+- App bundle output is `dist/Vessel.app`.
+- State management MUST use `ObservableObject` + `@Published` + `@StateObject` + `@ObservedObject`. Do NOT use `@State`, `@Observable`, or `@Bindable` macros so that `./scripts/bundle-app.sh` compiles directly with CommandLineTools (`swiftc -O -target arm64-apple-macos15.0`).
+- Always format port integers with `String(port)` inside SwiftUI `Text` and `Label` views to prevent thousands separators (`8080`, never `8,080`).
+- Only show "Open in Browser" (`safari`) for HTTP/HTTPS ports (`port.isHTTPService == true`). For raw TCP/UDP ports (`5432/tcp`, `6379/tcp`), show "Copy TCP Endpoint" instead.
+- Any new `.swift` file added under `Sources/AppleContainerUI/` must also be added to `scripts/bundle-app.sh`.
+- Run every engine command through `ContainerRuntime` (`store.perform` + `store.settle`), as argument vectors. Change state only after the command succeeded; never show invented data — there is no demo mode (AGENTS.md Rule 5).
+- Run `./scripts/test.sh` before finishing a change.

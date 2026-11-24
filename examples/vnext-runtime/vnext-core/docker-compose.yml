@@ -1,0 +1,311 @@
+# vNext Runtime — services of one domain, adapted for Apple Container (run it with Vessel).
+#
+# Based on vnext-runtime/vnext/docker/docker-compose.yml (profile "vnext"). Differences:
+#   * Dapr sidecars cannot share the application's network namespace on Apple Container
+#     (`network_mode: service:<app>` does not exist: every container is its own VM).
+#     Each sidecar is a container of its own instead:
+#       - daprd reaches the app through `--app-channel-address <app container>`,
+#       - the app reaches daprd through DAPR_HTTP_ENDPOINT / DAPR_GRPC_ENDPOINT,
+#       - sidecars find each other through ../dapr/config.yaml (name resolver `nameformat`;
+#         mDNS does not work between the container VMs), so each sidecar container is named
+#         `<app-id>-dapr`;
+#   * workflow components that call http://localhost:3001 (MockLab) or http://localhost:4201
+#     (the runtime itself) keep working: tools/with-localhost-forwards.sh wraps the entrypoint
+#     of the four applications and forwards those ports (run tools/fetch-busybox.sh once);
+#   * startup order uses depends_on conditions, which Vessel emulates
+#     (healthchecks run through `container exec`, one-shot jobs are awaited).
+#
+# The vnext-infra stack must be running. Domain files are created in the vnext-runtime
+# checkout with `make create-domain DOMAIN=<name> PORT_OFFSET=<n>`; .env points at them.
+
+services:
+  vnext-db-migrator:
+    image: "ghcr.io/burgan-tech/vnext/db-migrator:${VNEXT_VERSION:-latest}"
+    container_name: vnext-db-migrator-${DOMAIN_NAME}
+    cpus: 2
+    mem_limit: 1g
+    env_file:
+      - ${VNEXT_DOCKER_DIR}/domains/${DOMAIN_NAME}/.env.db-migrator
+    environment:
+      - APP_DOMAIN=${DOMAIN_NAME}
+      - DAPR_HTTP_ENDPOINT=http://vnext-db-migrator-${DOMAIN_NAME}-dapr:${DAPR_DBMIGRATOR_HTTP_PORT}
+      - DAPR_GRPC_ENDPOINT=http://vnext-db-migrator-${DOMAIN_NAME}-dapr:${DAPR_DBMIGRATOR_GRPC_PORT}
+    volumes:
+      - ${VNEXT_DOCKER_DIR}/domains/${DOMAIN_NAME}/appsettings.DbMigrator.Development.json:/app/appsettings.Development.json:ro
+
+  vnext-db-migrator-dapr:
+    image: "daprio/daprd:${DAPR_RUNTIME_VERSION:-latest}"
+    container_name: vnext-db-migrator-${DOMAIN_NAME}-dapr
+    cpus: 1
+    mem_limit: 512m
+    command: [
+      "./daprd",
+      "--app-id", "vnext-db-migrator-${DOMAIN_NAME}",
+      "--resources-path", "/components",
+      "--dapr-listen-addresses", "0.0.0.0",
+      "--dapr-internal-grpc-port", "50002",
+      "--config", "/dapr-config/config.yaml",
+      "--dapr-grpc-port", "${DAPR_DBMIGRATOR_GRPC_PORT}",
+      "--dapr-http-port", "${DAPR_DBMIGRATOR_HTTP_PORT}",
+      "--scheduler-host-address", "dapr-scheduler:50007",
+      "--placement-host-address", "dapr-placement:50005"
+    ]
+    volumes:
+      - ${VNEXT_DOCKER_DIR}/../db-migrator/dapr/components:/components
+      - ../dapr:/dapr-config:ro
+    depends_on:
+      - vnext-db-migrator
+
+  vnext-app:
+    image: "ghcr.io/burgan-tech/vnext/orchestrator:${VNEXT_VERSION:-latest}"
+    container_name: vnext-app-${DOMAIN_NAME}
+    cpus: 2
+    mem_limit: 1536m
+    env_file:
+      - ${VNEXT_DOCKER_DIR}/domains/${DOMAIN_NAME}/.env.orchestration
+    entrypoint: ["/fw/busybox", "sh", "/fw/with-localhost-forwards.sh", "dotnet", "BBT.Workflow.Orchestration.HttpApi.Host.dll"]
+    environment:
+      - APP_DOMAIN=${DOMAIN_NAME}
+      - LOCALHOST_FORWARDS=3001:mocklab:5000 4201:vnext-app-${DOMAIN_NAME}:5000 4203:vnext-worker-inbox-${DOMAIN_NAME}:5000
+      - DAPR_HTTP_ENDPOINT=http://vnext-app-${DOMAIN_NAME}-dapr:${DAPR_ORCHESTRATION_HTTP_PORT}
+      - DAPR_GRPC_ENDPOINT=http://vnext-app-${DOMAIN_NAME}-dapr:${DAPR_ORCHESTRATION_GRPC_PORT}
+    volumes:
+      - ../tools:/fw:ro
+      - ${VNEXT_DOCKER_DIR}/domains/${DOMAIN_NAME}/appsettings.Development.json:/app/appsettings.Development.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/health"]
+      interval: 10s
+      retries: 12
+      start_period: 35s
+      timeout: 10s
+    ports:
+      - "${VNEXT_APP_PORT}:5000/http"
+    depends_on:
+      vnext-db-migrator:
+        condition: service_completed_successfully
+      vnext-db-migrator-dapr:
+        condition: service_started
+
+  vnext-orchestration-dapr:
+    image: "daprio/daprd:${DAPR_RUNTIME_VERSION:-latest}"
+    container_name: vnext-app-${DOMAIN_NAME}-dapr
+    cpus: 1
+    mem_limit: 512m
+    command: [
+      "./daprd",
+      "--app-id", "vnext-app-${DOMAIN_NAME}",
+      "--app-port", "5000",
+      "--app-channel-address", "vnext-app-${DOMAIN_NAME}",
+      "--resources-path", "/components",
+      "--dapr-listen-addresses", "0.0.0.0",
+      "--dapr-internal-grpc-port", "50002",
+      "--config", "/dapr-config/config.yaml",
+      "--dapr-grpc-port", "${DAPR_ORCHESTRATION_GRPC_PORT}",
+      "--dapr-http-port", "${DAPR_ORCHESTRATION_HTTP_PORT}",
+      "--scheduler-host-address", "dapr-scheduler:50007",
+      "--placement-host-address", "dapr-placement:50005"
+    ]
+    ports:
+      # The Dapr HTTP API of the orchestrator's sidecar (event-driven tests publish through it).
+      - "${DAPR_ORCHESTRATION_HTTP_PORT}:${DAPR_ORCHESTRATION_HTTP_PORT}"
+    volumes:
+      - ${VNEXT_DOCKER_DIR}/../orchestration/dapr/components:/components
+      - ../dapr:/dapr-config:ro
+    depends_on:
+      - vnext-app
+
+  vnext-execution-app:
+    image: "ghcr.io/burgan-tech/vnext/execution:${VNEXT_VERSION:-latest}"
+    container_name: vnext-execution-app-${DOMAIN_NAME}
+    cpus: 2
+    mem_limit: 1536m
+    env_file:
+      - ${VNEXT_DOCKER_DIR}/domains/${DOMAIN_NAME}/.env.execution
+    entrypoint: ["/fw/busybox", "sh", "/fw/with-localhost-forwards.sh", "dotnet", "BBT.Workflow.Execution.HttpApi.Host.dll"]
+    environment:
+      - APP_DOMAIN=${DOMAIN_NAME}
+      - LOCALHOST_FORWARDS=3001:mocklab:5000 4201:vnext-app-${DOMAIN_NAME}:5000 4203:vnext-worker-inbox-${DOMAIN_NAME}:5000
+      - DAPR_HTTP_ENDPOINT=http://vnext-execution-app-${DOMAIN_NAME}-dapr:${DAPR_EXECUTION_HTTP_PORT}
+      - DAPR_GRPC_ENDPOINT=http://vnext-execution-app-${DOMAIN_NAME}-dapr:${DAPR_EXECUTION_GRPC_PORT}
+    volumes:
+      - ../tools:/fw:ro
+      - ${VNEXT_DOCKER_DIR}/domains/${DOMAIN_NAME}/appsettings.Execution.Development.json:/app/appsettings.Development.json:ro
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:5000/health"]
+      interval: 10s
+      retries: 12
+      start_period: 35s
+      timeout: 10s
+    ports:
+      - "${VNEXT_EXECUTION_PORT}:5000/http"
+    depends_on:
+      vnext-db-migrator:
+        condition: service_completed_successfully
+
+  vnext-execution-dapr:
+    image: "daprio/daprd:${DAPR_RUNTIME_VERSION:-latest}"
+    container_name: vnext-execution-app-${DOMAIN_NAME}-dapr
+    cpus: 1
+    mem_limit: 512m
+    command: [
+      "./daprd",
+      "--app-id", "vnext-execution-app-${DOMAIN_NAME}",
+      "--app-port", "5000",
+      "--app-channel-address", "vnext-execution-app-${DOMAIN_NAME}",
+      "--resources-path", "/components",
+      "--dapr-listen-addresses", "0.0.0.0",
+      "--dapr-internal-grpc-port", "50002",
+      "--config", "/dapr-config/config.yaml",
+      "--dapr-grpc-port", "${DAPR_EXECUTION_GRPC_PORT}",
+      "--dapr-http-port", "${DAPR_EXECUTION_HTTP_PORT}",
+      "--scheduler-host-address", "dapr-scheduler:50007",
+      "--placement-host-address", "dapr-placement:50005"
+    ]
+    volumes:
+      - ${VNEXT_DOCKER_DIR}/../execution/dapr/components:/components
+      - ../dapr:/dapr-config:ro
+    depends_on:
+      - vnext-execution-app
+
+  vnext-worker-inbox:
+    image: "ghcr.io/burgan-tech/vnext/inbox:${VNEXT_VERSION:-latest}"
+    container_name: vnext-worker-inbox-${DOMAIN_NAME}
+    cpus: 2
+    mem_limit: 1g
+    env_file:
+      - ${VNEXT_DOCKER_DIR}/domains/${DOMAIN_NAME}/.env.worker-inbox
+    entrypoint: ["/fw/busybox", "sh", "/fw/with-localhost-forwards.sh", "dotnet", "BBT.Workflow.Workers.Inbox.dll"]
+    environment:
+      - APP_DOMAIN=${DOMAIN_NAME}
+      - LOCALHOST_FORWARDS=3001:mocklab:5000 4201:vnext-app-${DOMAIN_NAME}:5000 4203:vnext-worker-inbox-${DOMAIN_NAME}:5000
+      - DAPR_HTTP_ENDPOINT=http://vnext-worker-inbox-${DOMAIN_NAME}-dapr:${DAPR_INBOX_HTTP_PORT}
+      - DAPR_GRPC_ENDPOINT=http://vnext-worker-inbox-${DOMAIN_NAME}-dapr:${DAPR_INBOX_GRPC_PORT}
+    volumes:
+      - ../tools:/fw:ro
+      - ${VNEXT_DOCKER_DIR}/domains/${DOMAIN_NAME}/appsettings.WorkerInbox.Development.json:/app/appsettings.Development.json:ro
+    ports:
+      - "${VNEXT_INBOX_PORT}:5000/http"
+    depends_on:
+      vnext-db-migrator:
+        condition: service_completed_successfully
+
+  vnext-worker-inbox-dapr:
+    image: "daprio/daprd:${DAPR_RUNTIME_VERSION:-latest}"
+    container_name: vnext-worker-inbox-${DOMAIN_NAME}-dapr
+    cpus: 1
+    mem_limit: 512m
+    command: [
+      "./daprd",
+      "--app-id", "vnext-worker-inbox-${DOMAIN_NAME}",
+      "--app-port", "5000",
+      "--app-channel-address", "vnext-worker-inbox-${DOMAIN_NAME}",
+      "--resources-path", "/components",
+      "--dapr-listen-addresses", "0.0.0.0",
+      "--dapr-internal-grpc-port", "50002",
+      "--config", "/dapr-config/config.yaml",
+      "--dapr-grpc-port", "${DAPR_INBOX_GRPC_PORT}",
+      "--dapr-http-port", "${DAPR_INBOX_HTTP_PORT}",
+      "--scheduler-host-address", "dapr-scheduler:50007",
+      "--placement-host-address", "dapr-placement:50005"
+    ]
+    volumes:
+      - ${VNEXT_DOCKER_DIR}/../worker-inbox/dapr/components:/components
+      - ../dapr:/dapr-config:ro
+    depends_on:
+      - vnext-worker-inbox
+
+  vnext-worker-outbox:
+    image: "ghcr.io/burgan-tech/vnext/outbox:${VNEXT_VERSION:-latest}"
+    container_name: vnext-worker-outbox-${DOMAIN_NAME}
+    cpus: 2
+    mem_limit: 1g
+    env_file:
+      - ${VNEXT_DOCKER_DIR}/domains/${DOMAIN_NAME}/.env.worker-outbox
+    entrypoint: ["/fw/busybox", "sh", "/fw/with-localhost-forwards.sh", "dotnet", "BBT.Workflow.Workers.Outbox.dll"]
+    environment:
+      - APP_DOMAIN=${DOMAIN_NAME}
+      - LOCALHOST_FORWARDS=3001:mocklab:5000 4201:vnext-app-${DOMAIN_NAME}:5000 4203:vnext-worker-inbox-${DOMAIN_NAME}:5000
+      - DAPR_HTTP_ENDPOINT=http://vnext-worker-outbox-${DOMAIN_NAME}-dapr:${DAPR_OUTBOX_HTTP_PORT}
+      - DAPR_GRPC_ENDPOINT=http://vnext-worker-outbox-${DOMAIN_NAME}-dapr:${DAPR_OUTBOX_GRPC_PORT}
+    volumes:
+      - ../tools:/fw:ro
+      - ${VNEXT_DOCKER_DIR}/domains/${DOMAIN_NAME}/appsettings.WorkerOutbox.Development.json:/app/appsettings.Development.json:ro
+    ports:
+      - "${VNEXT_OUTBOX_PORT}:5000/http"
+    depends_on:
+      vnext-db-migrator:
+        condition: service_completed_successfully
+
+  vnext-worker-outbox-dapr:
+    image: "daprio/daprd:${DAPR_RUNTIME_VERSION:-latest}"
+    container_name: vnext-worker-outbox-${DOMAIN_NAME}-dapr
+    cpus: 1
+    mem_limit: 512m
+    command: [
+      "./daprd",
+      "--app-id", "vnext-worker-outbox-${DOMAIN_NAME}",
+      "--app-port", "5000",
+      "--app-channel-address", "vnext-worker-outbox-${DOMAIN_NAME}",
+      "--resources-path", "/components",
+      "--dapr-listen-addresses", "0.0.0.0",
+      "--dapr-internal-grpc-port", "50002",
+      "--config", "/dapr-config/config.yaml",
+      "--dapr-grpc-port", "${DAPR_OUTBOX_GRPC_PORT}",
+      "--dapr-http-port", "${DAPR_OUTBOX_HTTP_PORT}",
+      "--scheduler-host-address", "dapr-scheduler:50007",
+      "--placement-host-address", "dapr-placement:50005"
+    ]
+    volumes:
+      - ${VNEXT_DOCKER_DIR}/../worker-outbox/dapr/components:/components
+      - ../dapr:/dapr-config:ro
+    depends_on:
+      - vnext-worker-outbox
+
+  vnext-init:
+    image: "ghcr.io/burgan-tech/vnext/init:${VNEXT_VERSION:-latest}"
+    container_name: vnext-init-${DOMAIN_NAME}
+    cpus: 2
+    mem_limit: 1g
+    environment:
+      VNEXT_APP_URL: "http://vnext-app-${DOMAIN_NAME}:5000"
+      PACKAGE_API_PORT: 3000
+      NPM_REGISTRY: "https://registry.npmjs.org/"
+      DOMAIN_NAME: ${DOMAIN_NAME}
+    ports:
+      - "${VNEXT_INIT_PORT}:3000/http"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:3000/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    depends_on:
+      vnext-app:
+        condition: service_healthy
+      vnext-orchestration-dapr:
+        condition: service_started
+
+  vnext-component-publisher:
+    image: "alpine/curl:${ALPINE_CURL_VERSION:-latest}"
+    container_name: vnext-component-publisher-${DOMAIN_NAME}
+    cpus: 1
+    mem_limit: 512m
+    env_file:
+      - ${VNEXT_DOCKER_DIR}/domains/${DOMAIN_NAME}/.env
+    environment:
+      VNEXT_INIT_URL: "http://vnext-init-${DOMAIN_NAME}:3000"
+    volumes:
+      - ${VNEXT_DOCKER_DIR}/publish-component.sh:/scripts/publish-component.sh:ro
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        echo "Publishing components to vnext-init..."
+        apk add --no-cache bash > /dev/null 2>&1
+        /bin/bash /scripts/publish-component.sh --skip-health --url "$$VNEXT_INIT_URL"
+    depends_on:
+      vnext-init:
+        condition: service_healthy
+
+networks:
+  vnext-development:
+    external: true

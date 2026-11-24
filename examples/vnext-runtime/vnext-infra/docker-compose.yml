@@ -1,0 +1,130 @@
+# vNext Runtime — shared infrastructure, adapted for Apple Container (run it with Vessel).
+#
+# Based on vnext-runtime/vnext/docker/docker-compose.yml (profile "infra"). Differences:
+#   * no profiles: infrastructure and each domain are separate stacks that share the
+#     external network `vnext-development`;
+#   * services find each other through the local DNS domain (see ../README.md).
+#
+# Paths come from .env (VNEXT_DOCKER_DIR = <vnext-runtime checkout>/vnext/docker).
+
+services:
+  dapr-placement:
+    image: "daprio/dapr:${DAPR_PLACEMENT_VERSION:-latest}"
+    container_name: dapr-placement
+    command: ["./placement"]
+    cpus: 1
+    mem_limit: 256m
+    ports:
+      - "50005:50005"
+
+  dapr-scheduler:
+    image: "daprio/scheduler:${DAPR_SCHEDULER_VERSION:-latest}"
+    container_name: dapr-scheduler
+    user: "0:0"
+    command: ["./scheduler", "--port", "50007", "--etcd-data-dir", "/data"]
+    cpus: 1
+    mem_limit: 512m
+    ports:
+      - "50007:50007"
+    volumes:
+      - type: tmpfs
+        target: /data
+
+  redis:
+    image: "redis:${REDIS_VERSION:-latest}"
+    container_name: vnext-redis
+    command: redis-server --save 20 1 --loglevel warning
+    cpus: 1
+    mem_limit: 512m
+    ports:
+      - "6379:6379"
+
+  postgres:
+    image: "postgres:${POSTGRES_VERSION:-latest}"
+    container_name: vnext-postgres
+    cpus: 2
+    mem_limit: 1g
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      PGDATA: /data/postgres/pgdata
+    volumes:
+      - postgres:/data/postgres
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  vault:
+    image: "vault:${VAULT_VERSION:-1.13.3}"
+    container_name: vnext-vault
+    cpus: 1
+    mem_limit: 512m
+    ports:
+      - "8200:8200"
+    environment:
+      VAULT_ADDR: "http://0.0.0.0:8200"
+      VAULT_API_ADDR: "http://0.0.0.0:8200"
+      VAULT_DEV_ROOT_TOKEN_ID: "admin"
+      VAULT_TOKEN: "admin"
+    cap_add:
+      - IPC_LOCK
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--proxy", "off", "http://127.0.0.1:8200/v1/sys/health?standbyok=true"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+    command: server -dev -dev-root-token-id="admin" -dev-listen-address=0.0.0.0:8200
+
+  vault-prepopulate:
+    image: "alpine/curl:${ALPINE_CURL_VERSION:-latest}"
+    container_name: vault-prepopulate
+    cpus: 1
+    mem_limit: 256m
+    depends_on:
+      vault:
+        condition: service_healthy
+    volumes:
+      - ${VNEXT_DOCKER_DIR}/config/vault/vault.sh:/etc/vault/prepopulate_vault.sh:ro
+    command: ["sh", "/etc/vault/prepopulate_vault.sh"]
+
+  openobserve:
+    image: "public.ecr.aws/zinclabs/openobserve:${OPENOBSERVE_VERSION:-latest}"
+    container_name: vnext-openobserve
+    cpus: 2
+    mem_limit: 1g
+    environment:
+      ZO_ROOT_USER_EMAIL: "root@example.com"
+      ZO_ROOT_USER_PASSWORD: "Complexpass#@123"
+      ZO_DATA_DIR: "/data"
+    ports:
+      - "5080:5080"
+    volumes:
+      - openobserve:/data
+
+  otel-collector:
+    image: "otel/opentelemetry-collector-contrib:${OTEL_COLLECTOR_VERSION:-latest}"
+    container_name: vnext-otel-collector
+    cpus: 1
+    mem_limit: 512m
+    volumes:
+      - ${VNEXT_DOCKER_DIR}/config/otel/otel-config.yaml:/etc/otelcol-contrib/config.yaml:ro
+    ports:
+      - "4317:4317"
+      - "4318:4318"
+      - "13133:13133"
+    depends_on:
+      - openobserve
+
+networks:
+  vnext-development:
+    external: true
+
+volumes:
+  postgres:
+  openobserve:

@@ -1,0 +1,139 @@
+name: Release & Publish Homebrew Cask
+
+on:
+  push:
+    branches: [main, master]
+    paths-ignore:
+      - "Casks/**"
+      - "docs/**"
+      - "**.md"
+      - ".github/CODEOWNERS"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Optional version override (e.g. 1.2.0)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  release-and-brew:
+    name: Build Release & Update Homebrew Cask
+    runs-on: macos-15
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Determine Release Version
+        id: vars
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+          else
+            BASE_VERSION="1.1"
+            VERSION="${BASE_VERSION}.${{ github.run_number }}"
+          fi
+          TAG="v${VERSION}"
+          ZIP_NAME="Vessel-${TAG}-macos-arm64.zip"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "zip_name=${ZIP_NAME}" >> "$GITHUB_OUTPUT"
+          echo "==> Target Release: ${TAG} (${ZIP_NAME})"
+
+      - name: Run Unit Tests
+        run: |
+          chmod +x ./scripts/test.sh
+          ./scripts/test.sh
+
+      - name: Stamp Version & Build Vessel.app
+        run: |
+          sed -i '' "s/<string>1.1.0<\/string>/<string>${{ steps.vars.outputs.version }}<\/string>/g" scripts/bundle-app.sh
+          chmod +x ./scripts/bundle-app.sh
+          ./scripts/bundle-app.sh
+
+      - name: Package Vessel.app Archive & Compute SHA256
+        id: pkg
+        run: |
+          ZIP_NAME="${{ steps.vars.outputs.zip_name }}"
+          ditto -c -k --sequesterRsrc --keepParent dist/Vessel.app "${ZIP_NAME}"
+          SHA256=$(shasum -a 256 "${ZIP_NAME}" | awk '{print $1}')
+          echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
+          echo "==> Built ${ZIP_NAME} (SHA256: ${SHA256})"
+
+      - name: Generate Homebrew Cask (Casks/vessel.rb)
+        run: |
+          mkdir -p Casks
+          cat > Casks/vessel.rb <<EOF
+          cask "vessel" do
+            version "${{ steps.vars.outputs.version }}"
+            sha256 "${{ steps.pkg.outputs.sha256 }}"
+
+            url "https://github.com/${{ github.repository }}/releases/download/${{ steps.vars.outputs.tag }}/${{ steps.vars.outputs.zip_name }}"
+            name "Vessel"
+            desc "Native macOS Container Studio for Apple Container (Virtualization.framework) & Docker Compose"
+            homepage "https://github.com/${{ github.repository }}"
+
+            depends_on macos: ">= :sequoia"
+            depends_on arch: :arm64
+
+            app "Vessel.app"
+            binary "#{appdir}/Vessel.app/Contents/MacOS/Vessel", target: "vessel"
+
+            postflight do
+              system_command "/usr/bin/xattr",
+                             args: ["-dr", "com.apple.quarantine", "#{appdir}/Vessel.app"],
+                             sudo: false
+            end
+
+            zap trash: [
+              "~/Library/Preferences/com.vessel.applecontainer.studio.plist",
+              "~/Library/Saved Application State/com.vessel.applecontainer.studio.savedState",
+            ]
+          end
+          EOF
+          cat Casks/vessel.rb
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ steps.vars.outputs.tag }}" \
+            "${{ steps.vars.outputs.zip_name }}" \
+            Casks/vessel.rb \
+            --title "Vessel ${{ steps.vars.outputs.tag }}" \
+            --generate-notes
+
+      - name: Update Casks/vessel.rb in Main Repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/vessel.rb
+          if ! git diff --staged --quiet; then
+            git commit -m "chore(brew): update Homebrew cask to ${{ steps.vars.outputs.tag }} [skip ci]"
+            git push origin HEAD:${{ github.ref_name }} || true
+          fi
+
+      - name: Sync Cask to External Homebrew Tap (if HOMEBREW_TAP_TOKEN is configured)
+        env:
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        run: |
+          if [ -z "${TAP_TOKEN}" ]; then
+            echo "HOMEBREW_TAP_TOKEN not set; skipping external tap sync (Casks/vessel.rb in main repo is up to date)."
+            exit 0
+          fi
+          TAP_REPO="middt/homebrew-tap"
+          git clone "https://x-access-token:${TAP_TOKEN}@github.com/${TAP_REPO}.git" /tmp/homebrew-tap
+          mkdir -p /tmp/homebrew-tap/Casks
+          cp Casks/vessel.rb /tmp/homebrew-tap/Casks/vessel.rb
+          cd /tmp/homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add Casks/vessel.rb
+          if ! git diff --staged --quiet; then
+            git commit -m "vessel ${{ steps.vars.outputs.version }}"
+            git push origin main
+          fi

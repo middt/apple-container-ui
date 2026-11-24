@@ -1,66 +1,130 @@
-# Vessel — Native macOS Container Studio for `apple/container` & Docker Compose
+# Vessel — Native macOS Container Studio for `apple/container`
 
-**Vessel** is a lightweight (~4 MB binary), 100% native macOS desktop studio built with **Swift + SwiftUI + Swift Charts** for Apple's Linux microVM container runtime ([github.com/apple/container](https://github.com/apple/container)) and the **Docker / Docker Compose** ecosystem.
+**Vessel** is a fast, lightweight (~2.5 MB), 100% native macOS desktop UI built with **SwiftUI + Swift Charts** for Apple's Linux microVM container runtime ([github.com/apple/container](https://github.com/apple/container)) with built-in, zero-conversion **`docker-compose.yml`** support.
 
----
-
-## Key Features
-
-- **100% Native macOS (`SwiftUI` + `Swift Charts`):** No Electron or WebView; a single ~4 MB binary with no third-party dependencies.
-- **Multi-Language Support (English & Turkish):** Automatically detects the system language on startup (`tr` -> Turkish, any other or unsupported language -> defaults to English) with an instant in-app language switcher in the toolbar.
-- **Real-Time Telemetry Charts (sampled every 2 s, every 10 s while in the background):**
-  - Live **CPU Utilization (%)**, **Memory Usage (MB / Limit)**, **`vmnet` Network Throughput (RX / TX KB/s)**, and **`VirtioBlk` Disk I/O (Read / Write KB/s)** charts per container and across the entire cluster.
-  - Live sidebar CPU & Memory sparklines and a per-container resource breakdown bar chart on the Dashboard.
-- **Real CLI, real state:**
-  - Every button runs the real `container` (or `docker`) command, and the UI only shows what the CLI reports. A failed command is shown in a banner and never changes the UI state.
-- **Safety nets:**
-  - Deleting a running container, a Compose group or a volume, and stopping the container system while containers run, ask for confirmation first.
-  - If macOS denies the Local Network permission to `container-runtime-linux`, published ports silently reset connections. Vessel probes each started container's port, detects this in the system log and shows a warning with a shortcut to the right Settings page.
-- **Compose groups:**
-  - Containers started by `docker compose` or a Vessel stack are grouped by project in the container list. A group has its own dashboard (aggregate CPU, memory, network and disk charts, per-container shares) and can be started, stopped, restarted or deleted as a unit.
-- **Real multi-service stacks:** service discovery through a local DNS domain (aliases per network + search domain), health-gated startup (`depends_on: condition: service_healthy` / `service_completed_successfully`), external networks shared between stacks, Compose volume naming and profiles. [examples/vnext-runtime/](examples/vnext-runtime/README.md) runs a 20-container Dapr-based runtime this way.
-- **Zero-Conversion `docker-compose.yml` -> `apple/container` (`Compose Stacks`):**
-  - Run `docker-compose.yml` / `compose.yaml` files on **Apple Container** (Vessel executes the generated `container network create` / `volume create` / `build` / `run` commands in dependency order) or via **`docker compose`**, without manual file conversion.
-- **Protocol-Aware Port Actions (`HTTP/HTTPS` vs Raw `TCP/UDP`):**
-  - Only actual web services (`httpbin :8090`, `nginx :8080`, `http-echo :8088`, `:3000`) display **Open in Browser (`safari`)** and **Test HTTP Output** buttons.
-  - Raw TCP sockets such as PostgreSQL (`5432/tcp`) and Valkey/Redis (`6379/tcp`) display a **Raw TCP Socket** badge and **Copy TCP Endpoint (`127.0.0.1:5432`)** instead of browser buttons.
+![Vessel — Containers & Live Metrics](docs/images/vessel-containers.png)
 
 ---
 
-## Quick Start
+## Step-by-Step Getting Started
 
-### 1. Install via Homebrew (macOS Apple Silicon)
+### Step 1 — Install & Start Apple's `container` Engine
+Vessel runs on top of Apple's official `container` runtime (requires an **Apple Silicon Mac** running **macOS 15+**).
+
+1. **Install `apple/container`** (via Homebrew or the [official `.pkg` installer from GitHub Releases](https://github.com/apple/container/releases)):
+   ```bash
+   brew install --cask container
+   ```
+2. **Start the background system service:**
+   ```bash
+   container system start
+   ```
+3. *(Optional)* **Enable local DNS for container-to-container discovery (`*.test`):**
+   ```bash
+   sudo container system dns create test
+   container system property set dns.domain test
+   ```
+
+---
+
+### Step 2 — Install Vessel via Homebrew
+Install **Vessel** directly from our Homebrew tap:
+
 ```bash
 brew tap middt/vessel https://github.com/middt/apple-container-ui
 brew install --cask vessel
 ```
 
-### 2. Build and Launch from Source (`dist/Vessel.app`)
+Then open **Vessel** from `/Applications/Vessel.app` (or Spotlight):
 ```bash
-chmod +x scripts/bundle-app.sh
-./scripts/bundle-app.sh
-open dist/Vessel.app
-```
-
-The bundle is ad-hoc signed. For distribution, sign with a Developer ID and the hardened runtime:
-```bash
-VESSEL_SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" ./scripts/bundle-app.sh
-```
-
-### 2. Run the Tests
-```bash
-./scripts/test.sh                 # unit tests (no containers are created)
-VESSEL_E2E=1 ./scripts/test.sh    # additionally deploys and removes a tiny Compose stack on the real engine
+open -a Vessel
 ```
 
 ---
 
-## Documentation Map
+### Step 3 — Run Your First Container
+You can launch a Linux microVM container in two ways:
+
+#### Option A: From the Vessel UI (1-Click)
+1. Click **`+ Run Container`** (`Cmd + N`) in the top-right toolbar (or pick a 1-click template such as **`httpbin`**, **`nginx`**, **`postgres`**, or **`valkey`** on the **Dashboard**).
+2. Set the container name (e.g. `httpbin`), image (`mccutchen/go-httpbin:v2.15.0`), vCPUs, memory, and port (`8090 → 8080/http`).
+3. Click **`Create & Boot MicroVM`**.
+4. Once running, click **`:8090`** (or **`Open http://localhost:8090`**) to open it in your browser, or click **`Shell`** to open an interactive terminal inside the microVM.
+
+#### Option B: From the Terminal (Instantly Appears in Vessel)
+```bash
+container run -d --name httpbin --cpus 2 --memory 512M --publish 8090:8080 mccutchen/go-httpbin:v2.15.0
+```
+Test the running service:
+```bash
+curl -s http://localhost:8090/get
+```
+
+---
+
+### Step 4 — Run a `docker-compose.yml` Stack (Zero Conversion)
+Apple's `container` CLI does not natively parse `docker-compose.yml` files. **Vessel** includes a built-in Compose orchestrator that runs standard `docker-compose.yml` files directly on `apple/container` without converting anything manually.
+
+![Vessel — Compose Stacks](docs/images/vessel-compose-stacks.png)
+
+1. Open the **`Compose Stacks`** tab (`Cmd + 3`) in the left sidebar.
+2. Click **`Import YAML`** and select any `docker-compose.yml` file (or use one of the built-in stacks in [`examples/`](examples/)).
+3. Select your target runtime in the top-right dropdown:
+   - **`Apple Container (MicroVM)`** — runs each service directly as an isolated Apple `Virtualization.framework` microVM in dependency order (`depends_on`).
+   - **`Docker CLI Engine`** — runs the stack via `docker compose up -d` if Docker is installed.
+4. Click **`Stack Up`**.
+   - All services in the stack are automatically grouped together in the **Containers** tab with aggregate CPU/RAM charts and bulk **Start / Stop / Restart / Delete** controls.
+
+#### Headless CLI Stack Deploy (Optional)
+You can also deploy any `docker-compose.yml` file on `apple/container` from the terminal using Vessel's helper script:
+```bash
+./scripts/stack-up.sh examples/httpbin-gateway/docker-compose.yml
+```
+
+---
+
+## Application Screenshots
+
+### 1. Cluster Dashboard & Real-Time Charts
+Live 1Hz cluster CPU, Memory, `vmnet` Network RX/TX, and Disk I/O telemetry alongside per-container resource distribution and 1-click microVM templates.
+
+![Vessel — Dashboard](docs/images/vessel-dashboard.png)
+
+### 2. Containers Inspector (Metrics, Logs, Exec/Shell, Mounts, Files & Raw JSON)
+Grouped by Compose project with protocol-aware port actions (**Open in Browser** & **Test HTTP Output** for HTTP/HTTPS services; **Copy TCP Endpoint** for raw TCP databases like PostgreSQL and Redis/Valkey).
+
+![Vessel — Containers Inspector](docs/images/vessel-containers-overview.jpg)
+
+### 3. Zero-Conversion `docker-compose.yml` Stack Manager
+Edit `docker-compose.yml` live, inspect the generated `apple/container` execution plan, and view combined multi-service stack logs.
+
+![Vessel — Compose Stacks](docs/images/vessel-compose-stacks.png)
+
+---
+
+## Building from Source (For Developers)
+
+No full Xcode installation is required — **CommandLineTools** (`swiftc`) on macOS 15+ is sufficient:
+
+```bash
+# Run the unit test suite:
+./scripts/test.sh
+
+# Build & sign dist/Vessel.app (Release, arm64):
+./scripts/bundle-app.sh
+
+# Launch the app:
+open dist/Vessel.app
+```
+
+---
+
+## Documentation
 
 | Document | Description |
 | :--- | :--- |
-| **[User Guide (`docs/USER_GUIDE.md`)](docs/USER_GUIDE.md)** | Step-by-step guide to all screens, keyboard shortcuts, localization, and container/network management. |
-| **[Docker & Compose Guide (`docs/COMPOSE_AND_DOCKER_GUIDE.md`)](docs/COMPOSE_AND_DOCKER_GUIDE.md)** | Running `docker-compose.yml` stacks directly on Apple Container or Docker CLI, plus the command translator. |
-| **[Architecture (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)** | Internal architecture, data flow, CLI integration, localization system, and build pipeline. |
-| **[AI Agent Guide (`AGENTS.md`)](AGENTS.md)** | Coding rules, compiler constraints, and file map for AI coding agents (Antigravity, Claude Code, Codex, Cursor). |
-| **[AI Development Roadmap (`docs/AI_DEVELOPMENT_ROADMAP.md`)](docs/AI_DEVELOPMENT_ROADMAP.md)** | Planned phases and ready-to-use AI prompts for continuing development. |
+| **[User Guide (`docs/USER_GUIDE.md`)](docs/USER_GUIDE.md)** | Complete walkthrough of all screens, keyboard shortcuts, and features. |
+| **[Docker & Compose Guide (`docs/COMPOSE_AND_DOCKER_GUIDE.md`)](docs/COMPOSE_AND_DOCKER_GUIDE.md)** | How zero-conversion `docker-compose.yml` orchestration works on `apple/container`. |
+| **[Architecture (`docs/ARCHITECTURE.md`)](docs/ARCHITECTURE.md)** | Internal architecture, CLI parsers, Compose DNS networking, and build pipeline. |
+| **[AI Agent Guide (`AGENTS.md`)](AGENTS.md)** | Coding conventions and compiler constraints for AI coding assistants. |
+| **[AI Development Roadmap (`docs/AI_DEVELOPMENT_ROADMAP.md`)](docs/AI_DEVELOPMENT_ROADMAP.md)** | Next phases and ready-to-use prompts for extending Vessel. |

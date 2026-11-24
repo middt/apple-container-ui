@@ -13,6 +13,12 @@ cask "vessel" do
   app "Vessel.app"
   binary "#{appdir}/Vessel.app/Contents/MacOS/Vessel", target: "vessel"
 
+  postflight do
+    system_command "/usr/bin/xattr",
+                   args: ["-dr", "com.apple.quarantine", "#{appdir}/Vessel.app"],
+                   sudo: false
+  end
+
   zap trash: [
     "~/Library/Preferences/com.vessel.applecontainer.studio.plist",
     "~/Library/Saved Application State/com.vessel.applecontainer.studio.savedState",

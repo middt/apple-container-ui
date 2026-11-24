@@ -29,7 +29,13 @@
 
 ## Quick Start
 
-### 1. Build and Launch (`dist/Vessel.app`)
+### 1. Install via Homebrew (macOS Apple Silicon)
+```bash
+brew tap middt/vessel https://github.com/middt/apple-container-ui
+brew install --cask vessel
+```
+
+### 2. Build and Launch from Source (`dist/Vessel.app`)
 ```bash
 chmod +x scripts/bundle-app.sh
 ./scripts/bundle-app.sh

@@ -52,6 +52,7 @@ You can deploy any Compose stack either by clicking **Stack Up** in the **Compos
 
 ```bash
 vessel stack-up docker-compose.yml
+vessel list
 vessel stack-down docker-compose.yml
 ```
 

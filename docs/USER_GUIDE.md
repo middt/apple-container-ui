@@ -17,10 +17,20 @@ This guide covers the installation, user interface, multi-language support, and 
   - **Local Network permission:** published ports (`localhost:8090`) only work if macOS allows `container-runtime-linux` under **System Settings → Privacy & Security → Local Network**. If it is denied, the browser only shows "connection reset". Vessel checks every container it sees start (it opens a short TCP connection to the published port) and shows an orange banner with an **Open Settings** button; the banner disappears by itself once access is allowed.
   - Failed commands appear in a red banner above the status bar and never change what the UI shows.
 
-### Build & Run
+### Build & Run (or Install via Homebrew)
 ```bash
-./scripts/bundle-app.sh
-open dist/Vessel.app
+# Install via Homebrew (installs /Applications/Vessel.app + 'vessel' CLI):
+brew tap middt/vessel https://github.com/middt/apple-container-ui
+brew install --cask vessel
+
+# Start the engine & launch Vessel:
+vessel system start
+open -a Vessel
+
+# Run a container or a Compose stack from the terminal using 'vessel':
+vessel run -d --name postgres-dev --cpus 2 --memory 1024M --publish 5432:5432 --env POSTGRES_PASSWORD=postgres postgres:17-alpine
+vessel stack-up docker-compose.yml
+vessel list
 ```
 
 ---

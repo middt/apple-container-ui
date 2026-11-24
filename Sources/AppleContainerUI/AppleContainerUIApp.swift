@@ -1,31 +1,81 @@
 import SwiftUI
 import AppKit
+import Darwin
 
 @main
 struct AppleContainerUIApp: App {
     @StateObject private var store = ContainerStore()
 
     init() {
-        let args = Array(CommandLine.arguments.dropFirst())
-        if let first = args.first, ["stack-up", "up", "stack-down", "down", "--help", "-h"].contains(first) {
-            Self.runHeadlessCLI(arguments: args)
+        let rawArgs = Array(CommandLine.arguments.dropFirst())
+        // Filter out macOS LaunchServices / AppKit automatic flags (-psn_*, -NS*, -Apple*)
+        let cliArgs = rawArgs.filter { arg in
+            !arg.hasPrefix("-psn_") && !arg.hasPrefix("-NS") && !arg.hasPrefix("-Apple")
+        }
+        if !cliArgs.isEmpty {
+            Self.runCLI(arguments: cliArgs)
         }
         NSApplication.shared.setActivationPolicy(.regular)
         NSApplication.shared.activate(ignoringOtherApps: true)
     }
 
-    /// Runs `vessel stack-up <compose-file>` or `vessel stack-down <compose-file>` directly from the terminal.
+    /// Unified `vessel` CLI:
+    /// - `vessel stack-up <docker-compose.yml>` / `vessel stack-down <docker-compose.yml>`: Zero-conversion Compose orchestration on `apple/container`.
+    /// - `vessel list`, `vessel run ...`, `vessel system start`, `vessel logs ...`, `vessel exec -it ...`: Direct zero-overhead pass-through (`execv`) to `apple/container`.
     @MainActor
-    private static func runHeadlessCLI(arguments: [String]) -> Never {
-        let action = arguments.first ?? "--help"
-        if action == "--help" || action == "-h" || arguments.count < 2 {
+    private static func runCLI(arguments: [String]) -> Never {
+        let action = arguments[0]
+
+        if action == "--help" || action == "-h" || action == "help" {
             print("""
-            Vessel — Native macOS Container Studio CLI
-            Usage:
+            Vessel — Native macOS Container Studio & Unified CLI for apple/container
+
+            Compose Orchestration (Zero Conversion):
               vessel stack-up <path/to/docker-compose.yml>     Import & deploy a Compose stack on apple/container
               vessel stack-down <path/to/docker-compose.yml>   Stop & remove a Compose stack on apple/container
+
+            Container & System Commands (Powered by apple/container):
+              vessel system start                              Start the background container engine
+              vessel system stop                               Stop the background container engine
+              vessel system status                             Show engine status
+              vessel list [--all]                              List containers
+              vessel run [options] <image> [command]           Run a new Linux microVM container
+              vessel start <container-id>                      Start a container
+              vessel stop <container-id>                       Stop a container
+              vessel delete [--force] <container-id>           Delete a container
+              vessel logs <container-id>                       View container logs
+              vessel exec -it <container-id> /bin/sh           Open an interactive shell inside a container
+              vessel stats                                     Display live container resource usage
+              vessel image | volume | network | builder ...    Manage OCI images, volumes, vmnet networks & builder
             """)
-            exit(action == "--help" || action == "-h" ? 0 : 1)
+            exit(0)
+        }
+
+        if ["stack-up", "up", "stack-down", "down"].contains(action) {
+            Self.runHeadlessComposeCLI(arguments: arguments)
+        }
+
+        // Pass-through any other `vessel <subcommand> ...` directly to the `apple/container` binary via execv
+        guard let binary = ContainerCLIService.detectBinaryPath() else {
+            FileHandle.standardError.write(Data("Error: apple/container engine ('container') not found. Install it with: brew install --cask container\n".utf8))
+            exit(1)
+        }
+
+        var cArgs: [UnsafeMutablePointer<CChar>?] = ([binary] + arguments).map { strdup($0) }
+        cArgs.append(nil)
+        execv(binary, &cArgs)
+
+        // Only reached if execv fails
+        perror("execv")
+        exit(1)
+    }
+
+    @MainActor
+    private static func runHeadlessComposeCLI(arguments: [String]) -> Never {
+        let action = arguments[0]
+        guard arguments.count >= 2 else {
+            FileHandle.standardError.write(Data("Usage: vessel \(action) <path/to/docker-compose.yml>\n".utf8))
+            exit(1)
         }
 
         let rawPath = arguments[1]
@@ -61,7 +111,7 @@ struct AppleContainerUIApp: App {
             )
             await store.refreshFromLiveCLI(userInitiated: true)
             guard store.engineState == .running else {
-                FileHandle.standardError.write(Data("Error: apple/container system is not running. Start it first with: container system start\n".utf8))
+                FileHandle.standardError.write(Data("Error: apple/container system is not running. Start it first with: vessel system start\n".utf8))
                 exitStatus = 1
                 sema.signal()
                 return
@@ -93,7 +143,10 @@ struct AppleContainerUIApp: App {
             }
 
             for entry in store.commandLog.reversed() where entry.command.hasPrefix("container ") || entry.command.hasPrefix("#") || entry.exitCode != 0 {
-                print("    [exit \(entry.exitCode), \(entry.durationMs)ms] \(entry.command)")
+                let displayCmd = entry.command.hasPrefix("container ")
+                    ? "vessel " + String(entry.command.dropFirst("container ".count))
+                    : entry.command
+                print("    [exit \(entry.exitCode), \(entry.durationMs)ms] \(displayCmd)")
             }
 
             if let err = store.errorBanner {

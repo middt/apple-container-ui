@@ -46,7 +46,14 @@ Vessel's built-in [ComposeOrchestrator.swift](../Sources/AppleContainerUI/Servic
 
 ## 3. A Real Multi-Service Example: vNext Runtime
 
-[examples/vnext-runtime/](../examples/vnext-runtime/README.md) runs the vNext workflow runtime — 8 infrastructure services and a 12-container domain with Dapr sidecars — as two stacks on a shared external network. To run it in **Vessel**, import `vnext-infra/docker-compose.yml` and `vnext-core/docker-compose.yml` in the **Compose Stacks** tab and click **Stack Up** on each.
+[examples/vnext-runtime/](../examples/vnext-runtime/README.md) runs the vNext workflow runtime — 8 infrastructure services and a 12-container domain with Dapr sidecars — as two stacks on a shared external network.
+
+You can deploy any Compose stack either by clicking **Stack Up** in the **Compose Stacks** tab or directly from the terminal using the `vessel` CLI installed by Homebrew:
+
+```bash
+vessel stack-up docker-compose.yml
+vessel stack-down docker-compose.yml
+```
 
 ---
 

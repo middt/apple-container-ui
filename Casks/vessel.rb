@@ -11,6 +11,7 @@ cask "vessel" do
   depends_on arch: :arm64
 
   app "Vessel.app"
+  binary "#{appdir}/Vessel.app/Contents/MacOS/Vessel", target: "vessel"
 
   zap trash: [
     "~/Library/Preferences/com.vessel.applecontainer.studio.plist",

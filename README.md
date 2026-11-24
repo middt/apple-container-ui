@@ -103,14 +103,14 @@ Apple's `container` CLI does not natively parse `docker-compose.yml` files. **Ve
 2. In **Vessel**, open the **`Compose Stacks`** tab (`Cmd + 3`) in the left sidebar.
 3. Click **`Import YAML`** and select your `docker-compose.yml` file.
 4. Set the engine dropdown in the top-right to **`Apple Container (MicroVM)`** (or **`Docker CLI Engine`** to run via `docker compose`).
-5. Click **`Stack Up`**.
-   - Vessel automatically generates and runs the underlying `apple/container` commands in `depends_on` order:
-     ```bash
-     container network create httpbin-gateway_default
-     container run --detach --name httpbin-gateway-httpbin-1 --network httpbin-gateway_default --cpus 2 --memory 512M --publish 8090:8080 mccutchen/go-httpbin:v2.15.0
-     container run --detach --name httpbin-gateway-api-gateway-1 --network httpbin-gateway_default --cpus 2 --memory 512M --publish 8080:80 nginx:1.27-alpine
-     container run --detach --name httpbin-gateway-cache-1 --network httpbin-gateway_default --cpus 1 --memory 512M --publish 6379:6379 valkey/valkey:8.0-alpine
-     ```
+5. Click **`Stack Up`** in the UI — or run it directly from your terminal using the **`vessel`** CLI installed by Homebrew:
+   ```bash
+   # Deploy any docker-compose.yml file directly on Apple Container:
+   vessel stack-up docker-compose.yml
+
+   # Or stop and remove the stack:
+   vessel stack-down docker-compose.yml
+   ```
 6. Verify the running stack endpoints:
    ```bash
    curl -s http://localhost:8090/get

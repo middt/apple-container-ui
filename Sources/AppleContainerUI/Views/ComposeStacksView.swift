@@ -149,12 +149,14 @@ struct ComposeStacksView: View {
                 HStack(spacing: 8) {
                     Text(stack.name)
                         .font(.system(size: 16, weight: .bold))
+                        .lineLimit(1)
                     Text(stack.status.localizedLabel(in: store.language))
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(stack.status.color)
                         .padding(.horizontal, 8)
                         .padding(.vertical, 2)
                         .background(stack.status.color.opacity(0.14), in: Capsule())
+                        .fixedSize()
                 }
                 Text(stack.filePath)
                     .font(.system(size: 11, design: .monospaced))

@@ -220,6 +220,7 @@ struct ContainersSplitView: View {
                 HStack(spacing: 8) {
                     Text(container.name)
                         .font(.system(size: 16, weight: .bold))
+                        .lineLimit(1)
                     HStack(spacing: 5) {
                         Circle()
                             .fill(container.state.color)
@@ -231,6 +232,7 @@ struct ContainersSplitView: View {
                     .padding(.horizontal, 8)
                     .padding(.vertical, 2)
                     .background(container.state.color.opacity(0.12), in: Capsule())
+                    .fixedSize()
 
                     Text("\(container.os)/\(container.arch)")
                         .font(.system(size: 10, weight: .medium, design: .monospaced))
@@ -238,6 +240,7 @@ struct ContainersSplitView: View {
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(Color.primary.opacity(0.06), in: Capsule())
+                        .fixedSize()
                 }
 
                 HStack(spacing: 12) {

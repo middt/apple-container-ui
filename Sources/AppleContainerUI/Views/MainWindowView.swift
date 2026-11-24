@@ -153,40 +153,60 @@ struct MainWindowView: View {
             Divider()
 
             // Navigation Items
-            List(selection: $store.selectedSidebar) {
-                Section(store.t("Apple Container Runtime", "Apple Konteyner Çalışma Zamanı")) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(store.t("Apple Container Runtime", "Apple Konteyner Çalışma Zamanı"))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .padding(.top, 8)
+                        .padding(.bottom, 4)
+
                     ForEach(SidebarItem.allCases) { item in
-                        HStack(spacing: 10) {
-                            Image(systemName: item.icon)
-                                .font(.system(size: 13, weight: .medium))
-                                .foregroundStyle(store.selectedSidebar == item ? .cyan : .secondary)
-                                .frame(width: 18)
+                        let isSelected = store.selectedSidebar == item
+                        Button {
+                            store.selectedSidebar = item
+                        } label: {
+                            HStack(spacing: 10) {
+                                Image(systemName: item.icon)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(isSelected ? .cyan : .secondary)
+                                    .frame(width: 18)
 
-                            VStack(alignment: .leading, spacing: 1) {
-                                Text(item.title(in: store.language))
-                                    .font(.system(size: 12.5, weight: .medium))
-                                Text(item.localizedSubtitle(in: store.language))
-                                    .font(.system(size: 9.5))
-                                    .foregroundStyle(.secondary)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(item.title(in: store.language))
+                                        .font(.system(size: 12.5, weight: isSelected ? .semibold : .medium))
+                                        .foregroundStyle(.primary)
+                                    Text(item.localizedSubtitle(in: store.language))
+                                        .font(.system(size: 9.5))
+                                        .foregroundStyle(.secondary)
+                                }
+
+                                Spacer()
+
+                                if let badge = badgeText(for: item) {
+                                    Text(badge)
+                                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                                        .foregroundStyle(isSelected ? .cyan : .secondary)
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 2)
+                                        .background(Color.primary.opacity(0.08), in: Capsule())
+                                }
                             }
-
-                            Spacer()
-
-                            if let badge = badgeText(for: item) {
-                                Text(badge)
-                                    .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                                    .foregroundStyle(.secondary)
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(Color.primary.opacity(0.08), in: Capsule())
-                            }
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                    .fill(isSelected ? Color.accentColor.opacity(0.22) : Color.clear)
+                            )
+                            .contentShape(Rectangle())
                         }
-                        .tag(item)
-                        .padding(.vertical, 2)
+                        .buttonStyle(.plain)
                     }
                 }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
             }
-            .listStyle(.sidebar)
 
             Divider()
 

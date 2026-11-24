@@ -11,57 +11,71 @@
 ### Step 1 — Install & Start Apple's `container` Engine
 Vessel runs on top of Apple's official `container` runtime (requires an **Apple Silicon Mac** running **macOS 15+**).
 
-1. **Install `apple/container`:**
-   ```bash
-   brew install --cask container
-   ```
-2. **Start the background engine:**
-   ```bash
-   container system start
-   ```
-3. *(Optional)* **Enable local DNS so containers in a Compose stack can reach each other by service name (`*.test`):**
-   ```bash
-   sudo container system dns create test
-   container system property set dns.domain test
-   ```
+```bash
+# 1. Install apple/container via Homebrew:
+brew install --cask container
+
+# 2. Start the background system daemon:
+container system start
+
+# 3. Verify the engine is running:
+container system status
+
+# 4. (Optional) Enable local DNS so containers in a Compose stack can resolve each other by service name (*.test):
+sudo container system dns create test
+container system property set dns.domain test
+```
 
 ---
 
 ### Step 2 — Install Vessel via Homebrew
-Install **Vessel** directly via Homebrew:
+Install **Vessel** from our Homebrew tap and launch it:
 
 ```bash
+# 1. Add the Vessel tap and install the macOS app:
 brew tap middt/vessel https://github.com/middt/apple-container-ui
 brew install --cask vessel
-```
 
-Launch **Vessel** from **Applications** (or via terminal):
-```bash
+# 2. Open Vessel:
 open -a Vessel
 ```
 
 ---
 
-### Step 3 — Run a Single Container in Vessel
-1. Open **Vessel** and click **`+ Run Container`** (`Cmd + N`) in the top-right toolbar (or click **Launch** on any 1-click template like **`httpbin`**, **`nginx`**, **`postgres`**, or **`valkey`** on the **Dashboard**).
+### Step 3 — Run Your First Container
+You can spin up a Linux microVM container either from the **Vessel UI** or directly from the **terminal** (any container started in the terminal immediately appears in Vessel with live CPU, Memory, Network, and Disk charts).
+
+#### Option A: From the Vessel UI
+1. Click **`+ Run Container`** (`Cmd + N`) in the top-right toolbar (or click **Launch** on any 1-click template such as **`httpbin`**, **`nginx`**, **`postgres`**, or **`valkey`** on the **Dashboard**).
 2. Enter the container settings:
    - **Name:** `httpbin`
    - **Image:** `mccutchen/go-httpbin:v2.15.0`
    - **Resources:** `2 vCPU`, `512 MB RAM`
    - **Port:** `8090` → `8080` (`HTTP`)
 3. Click **`Create & Boot MicroVM`**.
-4. Once running, click **`:8090`** in the header (or **`Open http://localhost:8090`** under *Inspect & Mounts*) to open it in your browser, or click **`Shell`** to open an interactive terminal inside the microVM.
+4. Once running, click **`:8090`** (or **`Open http://localhost:8090`**) to open it in your browser, or click **`Shell`** to open an interactive terminal inside the microVM.
+
+#### Option B: Example Terminal Commands
+```bash
+# Start an httpbin microVM container (2 vCPU, 512 MB RAM, port 8090 -> 8080):
+container run -d --name httpbin --cpus 2 --memory 512M --publish 8090:8080 mccutchen/go-httpbin:v2.15.0
+
+# Start a PostgreSQL 17 microVM container (port 5432):
+container run -d --name postgres-dev --cpus 2 --memory 1024M --publish 5432:5432 --env POSTGRES_PASSWORD=postgres postgres:17-alpine
+
+# Check running containers and test the HTTP endpoint:
+container list
+curl -s http://localhost:8090/get
+```
 
 ---
 
-### Step 4 — Run a `docker-compose.yml` Stack in Vessel (Zero Conversion)
-You do **not** need to convert your `docker-compose.yml` files. Vessel reads standard Compose files and boots every service directly on `apple/container`.
+### Step 4 — Run a `docker-compose.yml` Stack (Zero Conversion)
+Apple's `container` CLI does not natively parse `docker-compose.yml` files. **Vessel** includes a built-in Compose orchestrator that runs standard `docker-compose.yml` files directly on `apple/container` without any manual conversion.
 
 ![Vessel — Compose Stacks](docs/images/vessel-compose-stacks.png)
 
-1. In **Vessel**, click **`Compose Stacks`** (`Cmd + 3`) in the left sidebar.
-2. Click **`Import YAML`** in the top-left and select any `docker-compose.yml` file from your Mac.
-   *(If you want a quick example to test with, save the file below as `docker-compose.yml` and import it):*
+1. Save the following sample file as `docker-compose.yml` (or use any existing `docker-compose.yml` project on your Mac):
    ```yaml
    version: "3.9"
    services:
@@ -86,10 +100,23 @@ You do **not** need to convert your `docker-compose.yml` files. Vessel reads sta
        ports:
          - "6379:6379/tcp"
    ```
-3. Make sure the engine dropdown in the top-right is set to **`Apple Container (MicroVM)`** (or switch to **`Docker CLI Engine`** if you prefer to run it on Docker).
-4. Click **`Stack Up`**.
-   - Vessel automatically creates the network, volumes, and microVM containers in `depends_on` order.
-   - Switch to the **`Containers`** tab to see all stack services grouped together with aggregate CPU/Memory charts and 1-click bulk **Start / Stop / Restart / Delete** controls.
+2. In **Vessel**, open the **`Compose Stacks`** tab (`Cmd + 3`) in the left sidebar.
+3. Click **`Import YAML`** and select your `docker-compose.yml` file.
+4. Set the engine dropdown in the top-right to **`Apple Container (MicroVM)`** (or **`Docker CLI Engine`** to run via `docker compose`).
+5. Click **`Stack Up`**.
+   - Vessel automatically generates and runs the underlying `apple/container` commands in `depends_on` order:
+     ```bash
+     container network create httpbin-gateway_default
+     container run --detach --name httpbin-gateway-httpbin-1 --network httpbin-gateway_default --cpus 2 --memory 512M --publish 8090:8080 mccutchen/go-httpbin:v2.15.0
+     container run --detach --name httpbin-gateway-api-gateway-1 --network httpbin-gateway_default --cpus 2 --memory 512M --publish 8080:80 nginx:1.27-alpine
+     container run --detach --name httpbin-gateway-cache-1 --network httpbin-gateway_default --cpus 1 --memory 512M --publish 6379:6379 valkey/valkey:8.0-alpine
+     ```
+6. Verify the running stack endpoints:
+   ```bash
+   curl -s http://localhost:8090/get
+   curl -I http://localhost:8080
+   container list
+   ```
 
 ---
 
